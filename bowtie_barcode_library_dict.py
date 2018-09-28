@@ -2,8 +2,8 @@
 
 import argparse
 import collections
-import json
 import itertools
+import pickle
 
 
 def parse_bowtie_output(bowtie_output_file, max_mismatch):
@@ -29,46 +29,59 @@ def parse_bowtie_output(bowtie_output_file, max_mismatch):
             split_line2 = line2.rstrip().split()
             header1 = split_line1[0]
             header2 = split_line2[0]
-            assert header1 == header2, 'Read headers do not appear on sequential lines'
+            assert header1 == header2, \
+                'Read headers do not appear on sequential lines\n{0}\n{1}'.format(header1, header2)
             twist_tag1 = split_line1[2]
             twist_tag2 = split_line1[2]
             assert twist_tag1 == twist_tag2, 'Paired reads do not align to the same variant sequence'
 
-            # botwie counts mismatches descending from 0
+            # bowtie counts mismatches descending from 0
             try:
                 mismatches = -1 * (int(split_line1[-10].split(':')[-1]) + int(split_line2[-10].split(':')[-1]))
             except ValueError:
-                print("Read {0} missing alignment score".format(header1))
+                # print("Read {0} missing alignment score".format(header1))
                 continue
 
             if mismatches <= max_mismatch:
-                variant = (int(twist_tag1.split('REGION01_GROUP')[-1].split(':')[0]), twist_tag1.split('-->')[-1])
+                try:
+                    variant = (int(twist_tag1.split('REGION01_GROUP')[-1].split(':')[0]), twist_tag1.split('-->')[-1])
+                except ValueError:
+                    continue
                 header_variant_dict[header1] = variant
     return header_variant_dict
 
 
-def parse_index_fastq(index_fastq):
-    """TODO: decorator
+def fastq_to_id_seq_dict(fastq):
+    """Create a dictionary of identifiers and sequences from fastq file. identifiers do not have the @ symbol and
+    are cutoff after the first space
+
+    Args:
+        fastq: fastq formatted file - cannot be gzipped
+
+    Returns:
+        dictionary with keys as the sequence identifiers and values as sequences
     """
     identifier_sequence_dict = {}
-    with open(index_fastq, 'r') as f:
+    with open(fastq, 'r') as f:
         for identifier, sequence, spacer, quality_str in itertools.zip_longest(*[f] * 4, fillvalue=None):
             identifier_sequence_dict[identifier.split()[0].split('@')[-1]] = sequence.rstrip()
     return identifier_sequence_dict
 
 
 def bowtie_barcode_library_dict(bowtie_output, index_fastq, max_mismatch):
-    header_barcode_dict = parse_index_fastq(index_fastq)
+    print('Parsing index reads')
+    header_barcode_dict = fastq_to_id_seq_dict(index_fastq)
+    print('Parsing bowtie file')
     header_variant_dict = parse_bowtie_output(bowtie_output, max_mismatch)
-
+    print('Matching barcodes to variants')
     barcode_variant_counter = collections.defaultdict(collections.Counter)
     for header, variant in header_variant_dict.items():
         barcode = header_barcode_dict[header]
         barcode_variant_counter[barcode][variant] += 1
-    with open('barcode_variant_counter.json', 'w') as f:
-        json.dump(barcode_variant_counter, f, sort_keys=True, indent=4)
+    with open('barcode_variant_counter.pkl', 'wb') as f:
+        pickle.dump(barcode_variant_counter, f)
 
-    # TODO: check barcodes only have one variant - based on count - different script
+    # check barcodes only have one variant - based on count - different script
 
 
 if __name__ == '__main__':
